@@ -1,22 +1,31 @@
 // index.js
-const { Client, GatewayIntentBits, Partials } = require('discord.js');
+
+const {
+  Client,
+  GatewayIntentBits,
+  Partials,
+  REST,
+  Routes,
+  SlashCommandBuilder,
+  PermissionFlagsBits
+} = require('discord.js');
 const express = require('express');
-const fetch = require('node-fetch'); // make sure to install node-fetch
-require('dotenv').config(); // if using a .env file locally
+const fetch = require('node-fetch');
+require('dotenv').config();
 
-// 🟢 Replace with your bot token and role ID:
+// ===== CONFIG =====
 const TOKEN = process.env.TOKEN;
-const ROLE_ID = "1305376026343378964";
-const URL = process.env.URL; // your Render URL for self-ping
+const CLIENT_ID = process.env.CLIENT_ID; // your bot's Application ID
+const GUILD_ID = process.env.GUILD_ID;   // your test guild/server ID
+const URL = process.env.URL;              // your Render app URL (for self-ping)
 
-// ====== EXPRESS SERVER (for Render) ======
+// ===== EXPRESS SERVER (keeps bot alive on Render) =====
 const app = express();
-const PORT = process.env.PORT || 3000; // use Render port or fallback
+const PORT = process.env.PORT || 3000;
+app.get('/', (req, res) => res.send('✅ Bot is running fine!'));
+app.listen(PORT, () => console.log(`🌐 Express server listening on port ${PORT}`));
 
-app.get('/', (req, res) => res.send('Bot is running!'));
-app.listen(PORT, () => console.log(`🌐 Express server running on port ${PORT}`));
-
-// ====== DISCORD BOT ======
+// ===== DISCORD CLIENT =====
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
@@ -25,31 +34,83 @@ const client = new Client({
   partials: [Partials.GuildMember]
 });
 
-client.once("ready", () => {
+// ===== SLASH COMMAND: /autorole [role] =====
+const commands = [
+  new SlashCommandBuilder()
+    .setName('autorole')
+    .setDescription('Gives you a role you select.')
+    .addRoleOption(option =>
+      option
+        .setName('role')
+        .setDescription('The role to give yourself.')
+        .setRequired(true)
+    )
+    .setDefaultMemberPermissions(PermissionFlagsBits.SendMessages)
+    .toJSON()
+];
+
+// ===== REGISTER COMMANDS ON STARTUP =====
+client.once('ready', async () => {
   console.log(`✅ Logged in as ${client.user.tag}`);
-  console.log(`🔌 Bot is listening on port ${PORT}`); // explicit port log
-});
 
-client.on("guildMemberAdd", async (member) => {
+  const rest = new REST({ version: '10' }).setToken(TOKEN);
+
   try {
-    const role = member.guild.roles.cache.get(ROLE_ID);
-    if (!role) return console.log("⚠️ Role not found!");
-
-    await member.roles.add(role);
-    console.log(`🎉 Added role ${role.name} to ${member.user.tag}`);
-  } catch (err) {
-    console.error("❌ Error adding role:", err);
+    console.log('⚙️ Registering slash commands...');
+    await rest.put(
+      Routes.applicationGuildCommands(CLIENT_ID, GUILD_ID),
+      { body: commands }
+    );
+    console.log('✅ Slash command /autorole registered successfully!');
+  } catch (error) {
+    console.error('❌ Failed to register commands:', error);
   }
 });
 
-// ====== SELF-PING TO STAY ALIVE ======
+// ===== HANDLE /autorole COMMAND =====
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+  if (interaction.commandName !== 'autorole') return;
+
+  const role = interaction.options.getRole('role');
+
+  try {
+    const member = await interaction.guild.members.fetch(interaction.user.id);
+
+    // Permissions check
+    if (!role.editable) {
+      await interaction.reply({
+        content: '⚠️ I don’t have permission to give that role. Please check my role position.',
+        ephemeral: true
+      });
+      return;
+    }
+
+    await member.roles.add(role);
+    await interaction.reply({
+      content: `🎉 You’ve been given the **${role.name}** role!`,
+      ephemeral: true
+    });
+    console.log(`✅ ${interaction.user.tag} received ${role.name}`);
+  } catch (error) {
+    console.error('❌ Error giving role:', error);
+    await interaction.reply({
+      content: '❌ Failed to give role. Please check my permissions.',
+      ephemeral: true
+    });
+  }
+});
+
+// ===== SELF-PING TO STAY AWAKE ON RENDER =====
 if (URL) {
   setInterval(() => {
     fetch(URL)
-      .then(() => console.log('🟢 Pinged self to stay alive'))
-      .catch(err => console.error('🔴 Failed to ping self:', err));
+      .then(() => console.log('🟢 Pinged self to stay awake'))
+      .catch(err => console.error('🔴 Self-ping failed:', err));
   }, 5 * 60 * 1000); // every 5 minutes
 }
 
-// ====== LOGIN ======
+// ===== LOGIN =====
 client.login(TOKEN);
+
+    
